@@ -1,4 +1,5 @@
 # mcp-krs
+[![MCP](https://img.shields.io/badge/MCP-Server-blue)](https://modelcontextprotocol.io) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![Node](https://img.shields.io/badge/Node-18%2B-brightgreen)](https://nodejs.org)
 
 MCP server dla **Krajowego Rejestru Sądowego** przez oficjalne, darmowe
 API Ministerstwa Sprawiedliwości (`api-krs.ms.gov.pl/api/krs`).
