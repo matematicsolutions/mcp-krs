@@ -1,0 +1,33 @@
+{
+  "name": "mcp-krs",
+  "version": "1.0.0",
+  "description": "MCP server - Polish KRS registry (Krajowy Rejestr Sadowy) via official MS API",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "tsx src/index.ts"
+  },
+  "keywords": [
+    "mcp",
+    "krs",
+    "krajowy-rejestr-sadowy",
+    "ms-gov-pl",
+    "rejestr-przedsiebiorcow",
+    "legal",
+    "poland"
+  ],
+  "author": "MateMatic / Wieslaw Mazur",
+  "license": "MIT",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.12.0"
+  },
+  "devDependencies": {
+    "typescript": "^5.4.5",
+    "tsx": "^4.19.3",
+    "@types/node": "^20.14.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
