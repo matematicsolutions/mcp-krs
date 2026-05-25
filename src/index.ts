@@ -370,9 +370,57 @@ function formatBoardOnly(krs: string, odpis: Odpis): string {
 
 const REJESTR_OPTIONS = ["P", "S"] as const;
 
+// ---------------------------------------------------------------------------
+// Instructions (procedural orchestration)
+// Pattern z dograh-hq/dograh v1.31.0 (BSD-2) via mcp-eu-compliance v0.2.0.
+// ---------------------------------------------------------------------------
+
+const INSTRUCTIONS = `Ten serwer MCP udostepnia Krajowy Rejestr Sadowy (KRS) przez oficjalne darmowe API Ministerstwa Sprawiedliwosci (api.krs.ms.gov.pl). Dane KRS publiczne ale RODO dotyczy przy laczeniu (zarzad = osoby fizyczne).
+
+## Kolejnosc wywolan
+
+### Stan aktualny podmiotu
+1. \`get_entity\` - odpis aktualny po KRS (np. '0000028860' lub krocej '28860' - auto-padding). Zwraca nazwe, NIP, REGON, adres, kapital, zarzad, prokurentow, status.
+
+### Tylko reprezentacja
+2. \`get_board\` - skrocony: tylko zarzad + sposob reprezentacji + prokurenci. Szybciej niz get_entity gdy potrzebujesz tylko "kto reprezentuje X".
+
+### Historia zmian
+3. \`get_entity_full\` - odpis pelny ze wszystkimi historycznymi wpisami. Duza odpowiedz, uzywaj kiedy potrzebujesz historii zarzadu / sukcesji.
+
+## Twarde ograniczenia
+
+- **Snapshot in time** - odpis ma date wystawienia. Cytowanie "KRS na dzien YYYY-MM-DD" jest KLUCZOWE. Outdated = blad merytoryczny.
+- **Rejestr P (przedsiebiorcy) vs S (stowarzyszenia)** - default P. Dla fundacji/stowarzyszen uzyj S.
+- **NIE buduj profili osob fizycznych** - get_board zwraca jak sa, ale agregacja "ktora osoba w ilu zarzadach" to ryzyko RODO (cel przetwarzania). To powinno byc w produkcie z podstawa, NIE w konektorze.
+- **Stateless, bez cache** - kazde wywolanie fresh do MS API.
+- **\`structuredContent.citations\`**: title (nazwa podmiotu), url (krs.ms.gov.pl), krs_number, odpis_date, rejestr. Cytuj w odpowiedzi.
+
+## Iteracja po bledach
+
+Tool zwraca \`isError: true\` + tekst z prefixem \`[code]\`. Kody:
+- \`missing_arg\` - brak \`krs\` (numer 1-10 cyfr wymagany).
+- \`invalid_krs\` - format nieprawidlowy (np. niecyfry, ponad 10 cyfr).
+- \`not_found\` - KRS nie istnieje w danym rejestrze. Sprobuj drugi rejestr (P↔S) lub sprawdz cyfry.
+- \`upstream_error\` - blad MS API. Retry raz przed surface do uzytkownika.
+
+## Styl odpowiedzi
+
+- Cytuj z data odpisu: "KRS 0000028860 (PKO BP S.A., odpis na 2026-05-25)".
+- Dla zarzadu wymien funkcje + nazwiska + role (Prezes/Czlonek), z disclaimerem o RODO przy publikacji.
+- NIE wymyslaj nazw firm ani sklad zarzadu - wszystko z \`structuredContent.citations\`.`;
+
+const READ_ONLY_ANNOTATIONS = {
+    readOnlyHint: true,
+    idempotentHint: true,
+    destructiveHint: false,
+    openWorldHint: true, // upstream MS API live
+} as const;
+
 const TOOLS = [
     {
         name: "get_entity",
+        annotations: READ_ONLY_ANNOTATIONS,
         description:
             "Pobiera ODPIS AKTUALNY z Krajowego Rejestru Sadowego po numerze KRS. " +
             "Zwraca pelne dane podmiotu: nazwa, forma prawna, NIP, REGON, adres, " +
@@ -400,6 +448,7 @@ const TOOLS = [
     },
     {
         name: "get_entity_full",
+        annotations: READ_ONLY_ANNOTATIONS,
         description:
             "Pobiera ODPIS PELNY z KRS (z historia wpisow - kazda zmiana, kazde " +
             "wykreslenie, wszystkie poprzednie sklady zarzadu). Wieksza odpowiedz, " +
@@ -422,6 +471,7 @@ const TOOLS = [
     },
     {
         name: "get_board",
+        annotations: READ_ONLY_ANNOTATIONS,
         description:
             "SKROCONA wersja: tylko sklad zarzadu + sposob reprezentacji + prokurenci. " +
             "Szybciej niz get_entity gdy potrzebujesz tylko 'kto reprezentuje X'. " +
@@ -448,9 +498,20 @@ const TOOLS = [
 // MCP Server setup
 // ---------------------------------------------------------------------------
 
+// Strukturalne kody bledow.
+type ErrorCode = "missing_arg" | "invalid_krs" | "not_found" | "upstream_error";
+
+function errorResult(text: string, code: ErrorCode) {
+    return {
+        content: [{ type: "text" as const, text: `[${code}] ${text}` }],
+        structuredContent: { error_code: code },
+        isError: true,
+    };
+}
+
 const server = new Server(
-    { name: "mcp-krs", version: "1.0.0" },
-    { capabilities: { tools: {} } },
+    { name: "mcp-krs", version: "1.1.0" },
+    { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
 );
 
 server.setRequestHandler(ListToolsRequestSchema, async () => ({
@@ -458,6 +519,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => ({
         name: t.name,
         description: t.description,
         inputSchema: t.inputSchema,
+        annotations: t.annotations,
     })),
 }));
 
@@ -482,15 +544,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             : "P";
 
     if (typeof krsRaw !== "string" || krsRaw.length === 0) {
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: "Blad: parametr 'krs' (numer rejestrowy 1-10 cyfr) jest wymagany.",
-                },
-            ],
-            isError: true,
-        };
+        return errorResult(
+            "parametr 'krs' (numer rejestrowy 1-10 cyfr) jest wymagany.",
+            "missing_arg",
+        );
+    }
+    if (!/^\d{1,10}$/.test(krsRaw)) {
+        return errorResult(
+            `numer KRS '${krsRaw}' nieprawidlowy. Wymagane 1-10 cyfr (np. '28860' lub '0000028860').`,
+            "invalid_krs",
+        );
     }
 
     try {
@@ -502,15 +565,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     "OdpisAktualny",
                 );
                 if (!odpis) {
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Brak wpisu o numerze KRS ${krs} w rejestrze "${rejestr}".\n\nSprawdz w wyszukiwarce: ${krsUiUrl(krs)}`,
-                            },
-                        ],
-                        isError: true,
-                    };
+                    return errorResult(
+                        `Brak wpisu o numerze KRS ${krs} w rejestrze "${rejestr}". Sprawdz w wyszukiwarce: ${krsUiUrl(krs)}. Sprobuj tez drugi rejestr (${rejestr === "P" ? "S" : "P"}).`,
+                        "not_found",
+                    );
                 }
                 return {
                     content: [{ type: "text", text: formatEntity(krs, odpis) }],
@@ -527,15 +585,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     "OdpisPelny",
                 );
                 if (!odpis) {
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Brak odpisu pelnego dla KRS ${krs} (rejestr "${rejestr}").`,
-                            },
-                        ],
-                        isError: true,
-                    };
+                    return errorResult(
+                        `Brak odpisu pelnego dla KRS ${krs} (rejestr "${rejestr}").`,
+                        "not_found",
+                    );
                 }
                 // Format identyczny - dane sa wieksze (historia w wartosciach),
                 // LLM dostaje pelen plik tekstowy.
@@ -554,15 +607,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     "OdpisAktualny",
                 );
                 if (!odpis) {
-                    return {
-                        content: [
-                            {
-                                type: "text",
-                                text: `Brak wpisu o numerze KRS ${krs}.`,
-                            },
-                        ],
-                        isError: true,
-                    };
+                    return errorResult(`Brak wpisu o numerze KRS ${krs}.`, "not_found");
                 }
                 return {
                     content: [
@@ -575,24 +620,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             }
 
             default:
-                return {
-                    content: [
-                        { type: "text", text: `Nieznane narzedzie: ${name}` },
-                    ],
-                    isError: true,
-                };
+                return errorResult(`Nieznane narzedzie: ${name}`, "missing_arg");
         }
     } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
-        return {
-            content: [
-                {
-                    type: "text",
-                    text: `Blad komunikacji z API MS KRS: ${msg}\n\nSprobuj ponownie za chwile.`,
-                },
-            ],
-            isError: true,
-        };
+        if (/404|not found/i.test(msg)) {
+            return errorResult(`KRS nie znaleziony w MS API: ${msg}.`, "not_found");
+        }
+        return errorResult(
+            `Blad komunikacji z API MS KRS: ${msg}. Sprobuj ponownie za chwile.`,
+            "upstream_error",
+        );
     }
 });
 
