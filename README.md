@@ -59,7 +59,7 @@ W `patron/backend/mcp-servers.json`:
   "name": "krs",
   "transport": "stdio",
   "command": "node",
-  "args": ["C:/Users/Wieslaw/mcp-krs/dist/index.js"],
+  "args": ["C:/Users/<TWOJ-UZYTKOWNIK>/mcp-krs/dist/index.js"],
   "enabled": true
 }
 ```
