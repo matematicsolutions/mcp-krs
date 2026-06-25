@@ -1,4 +1,21 @@
 # mcp-krs
+
+## Instalacja (jedna komenda)
+
+Opublikowany na npm + MCP Registry (`io.github.matematicsolutions/mcp-krs`). Uruchomienie bez klonowania:
+
+```bash
+npx -y @matematicsolutions/mcp-krs
+```
+
+Konfiguracja klienta MCP (stdio):
+
+```json
+{ "mcpServers": { "mcp-krs": { "command": "npx", "args": ["-y", "@matematicsolutions/mcp-krs"] } } }
+```
+
+(Budowanie ze źródeł — niżej.)
+
 [![MCP](https://img.shields.io/badge/MCP-Server-blue)](https://modelcontextprotocol.io) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![Node](https://img.shields.io/badge/Node-18%2B-brightgreen)](https://nodejs.org)
 
 MCP server dla **Krajowego Rejestru Sądowego** przez oficjalne, darmowe
