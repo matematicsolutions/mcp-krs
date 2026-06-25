@@ -1,0 +1,22 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.matematicsolutions/mcp-krs",
+  "description": "MCP server for the Polish KRS company registry via the official Ministry of Justice API.",
+  "version": "1.1.1",
+  "repository": {
+    "url": "https://github.com/matematicsolutions/mcp-krs",
+    "source": "github"
+  },
+  "packages": [
+    {
+      "registryType": "npm",
+      "registryBaseUrl": "https://registry.npmjs.org",
+      "identifier": "@matematicsolutions/mcp-krs",
+      "version": "1.1.1",
+      "runtimeHint": "npx",
+      "transport": {
+        "type": "stdio"
+      }
+    }
+  ]
+}
