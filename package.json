@@ -1,6 +1,6 @@
 {
-  "name": "mcp-krs",
-  "version": "1.1.0",
+  "name": "@matematicsolutions/mcp-krs",
+  "version": "1.1.1",
   "description": "MCP server - Polish KRS registry (Krajowy Rejestr Sadowy) via official MS API",
   "main": "dist/index.js",
   "scripts": {
@@ -30,5 +30,20 @@
   },
   "engines": {
     "node": ">=18.0.0"
+  },
+  "mcpName": "io.github.matematicsolutions/mcp-krs",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/matematicsolutions/mcp-krs.git"
+  },
+  "bin": {
+    "mcp-krs": "dist/index.js"
+  },
+  "files": [
+    "dist"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
   }
 }
