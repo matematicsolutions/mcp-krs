@@ -97,7 +97,7 @@ acting jointly", board composition, commercial proxies (prokurenci) + URL.
 
 The Ministry of Justice API returns **masked** personal data of board members
 in its responses (asterisks in surnames after the 2023 amendment). Patron passes
-this through raw, it does not unmask. For full surnames: the law-firm user
+this through raw and does not unmask it. For full surnames, the law-firm user
 opens the Ministry of Justice link in a browser after logging in.
 
 ## Lineage
