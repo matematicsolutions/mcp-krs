@@ -1,65 +1,65 @@
 # mcp-krs
 
-## Instalacja (jedna komenda)
+## Installation (one command)
 
-Opublikowany na npm + MCP Registry (`io.github.matematicsolutions/mcp-krs`). Uruchomienie bez klonowania:
+Published on npm + MCP Registry (`io.github.matematicsolutions/mcp-krs`). Run without cloning:
 
 ```bash
 npx -y @matematicsolutions/mcp-krs
 ```
 
-Konfiguracja klienta MCP (stdio):
+MCP client configuration (stdio):
 
 ```json
 { "mcpServers": { "mcp-krs": { "command": "npx", "args": ["-y", "@matematicsolutions/mcp-krs"] } } }
 ```
 
-(Budowanie ze źródeł — niżej.)
+(Building from source - below.)
 
 [![MCP](https://img.shields.io/badge/MCP-Server-blue)](https://modelcontextprotocol.io) [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE) [![Node](https://img.shields.io/badge/Node-18%2B-brightgreen)](https://nodejs.org)
 
-MCP server dla **Krajowego Rejestru Sądowego** przez oficjalne, darmowe
-API Ministerstwa Sprawiedliwości (`api-krs.ms.gov.pl/api/krs`).
+MCP server for the **Krajowy Rejestr Sadowy / KRS (National Court Register)** via the official, free
+Ministerstwo Sprawiedliwosci (Ministry of Justice) API (`api-krs.ms.gov.pl/api/krs`).
 
-## Po co
+## Why
 
-Kancelaria pyta o kontrahenta → Patron zwraca pełne dane rejestrowe:
-nazwa, forma prawna, NIP, REGON, adres, kapitał, **skład zarządu, sposób
-reprezentacji, prokurenci**, główny PKD, status (aktywny / likwidacja /
-upadłość). Plus URL do wyszukiwarki MS.
+A law firm asks about a counterparty -> Patron returns full register data:
+name, legal form, NIP, REGON, address, share capital, **board composition, representation
+rules, commercial proxies (prokurenci)**, primary PKD code, status (active / liquidation /
+bankruptcy). Plus a URL to the Ministry of Justice search tool.
 
-Krytyczne dla pracy nad umowami: pytanie „czy ta osoba może sama
-podpisać tę umowę za spółkę X" sprowadza się do **dwóch ruchów** —
-`krs__get_board` z numerem KRS, potem porównanie sposobu reprezentacji
-ze stroną podpisującą.
+Critical for contract work: the question "can this person sign this contract
+for company X on their own" reduces to **two moves** -
+`krs__get_board` with the KRS number, then comparing the representation rules
+against the signing party.
 
-## Tooly
+## Tools
 
-- **`get_entity(krs, rejestr?)`** — odpis aktualny (pełne dane podmiotu).
-- **`get_entity_full(krs, rejestr?)`** — odpis pełny (z historią wpisów).
-- **`get_board(krs, rejestr?)`** — skrócona: tylko reprezentacja
-  (sposób + skład) + prokurenci.
+- **`get_entity(krs, rejestr?)`** - current extract (full entity data).
+- **`get_entity_full(krs, rejestr?)`** - full extract (with entry history).
+- **`get_board(krs, rejestr?)`** - short form: representation only
+  (rules + composition) + commercial proxies (prokurenci).
 
-Parametry:
-- `krs` — 1-10 cyfr, zera wiodące dopełniane automatycznie
-  (`28860` → `0000028860`).
-- `rejestr` — `P` (przedsiębiorców, default) lub `S` (stowarzyszeń).
+Parameters:
+- `krs` - 1-10 digits, leading zeros padded automatically
+  (`28860` -> `0000028860`).
+- `rejestr` - `P` (entrepreneurs register, default) or `S` (associations register).
 
-Każda zwrotka zawiera `structuredContent.citations` z polami:
-`title`, `url` (MS wyszukiwarka), `krs`, `nazwa`, `nip`, `regon`,
+Every response contains `structuredContent.citations` with fields:
+`title`, `url` (Ministry of Justice search), `krs`, `nazwa`, `nip`, `regon`,
 `forma_prawna`, `status`, `miejscowosc`, `sad_rejestrowy`, `rejestr`.
 
-Patron czyta pole automatycznie i wystawia w panelu UI jako sekcję
-**„Krajowy Rejestr Sądowy (KRS — MS)"**.
+Patron reads the field automatically and renders it in the UI panel as a
+**"Krajowy Rejestr Sadowy (KRS - MS)"** section.
 
 ## Stack
 
-- Node 18+ (wbudowany `fetch`)
+- Node 18+ (built-in `fetch`)
 - `@modelcontextprotocol/sdk`
 - Stdio transport
-- Throttle 500 ms (2 req/s) — MS API tolerancyjne ale grzecznie
+- Throttle 500 ms (2 req/s) - the Ministry of Justice API is tolerant, but be polite
 
-## Build + uruchomienie
+## Build + run
 
 ```bash
 npm install
@@ -67,16 +67,16 @@ npm run build
 node dist/index.js
 ```
 
-## Wpięcie do Patrona
+## Wiring into Patron
 
-W `patron/backend/mcp-servers.json`:
+In `patron/backend/mcp-servers.json`:
 
 ```json
 {
   "name": "krs",
   "transport": "stdio",
   "command": "node",
-  "args": ["C:/Users/<TWOJ-UZYTKOWNIK>/mcp-krs/dist/index.js"],
+  "args": ["C:/Users/<YOUR-USER>/mcp-krs/dist/index.js"],
   "enabled": true
 }
 ```
@@ -90,22 +90,22 @@ echo '{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":
   | node dist/index.js
 ```
 
-Powinno zwrócić ORLEN SA, sposób reprezentacji „dwaj członkowie zarządu
-działający łącznie", skład zarządu, prokurenci + URL.
+Should return ORLEN SA, representation rules "two board members
+acting jointly", board composition, commercial proxies (prokurenci) + URL.
 
-## Uwagi RODO
+## GDPR notes
 
-API MS w odpowiedziach zwraca **zamaskowane** dane osobowe członków
-zarządu (gwiazdki w nazwiskach po nowelizacji 2023). Patron przepuszcza
-to surowo, nie demaskuje. Dla pełnych nazwisk: użytkownik kancelarii
-otwiera link MS w przeglądarce po zalogowaniu.
+The Ministry of Justice API returns **masked** personal data of board members
+in its responses (asterisks in surnames after the 2023 amendment). Patron passes
+this through raw, it does not unmask. For full surnames: the law-firm user
+opens the Ministry of Justice link in a browser after logging in.
 
 ## Lineage
 
-Kontrakt API z oficjalnej dokumentacji
-[MS api-krs.ms.gov.pl](https://api-krs.ms.gov.pl). Implementacja TS od zera.
+API contract from the official documentation
+[MS api-krs.ms.gov.pl](https://api-krs.ms.gov.pl). TypeScript implementation from scratch.
 
-## Licencja
+## License
 
 MIT.
 
@@ -115,11 +115,11 @@ This server is one of five MCP connectors covering Polish jurisdiction +
 EU law, used by [Patron](https://github.com/matematicsolutions/patron)
 (AGPL-3.0) and any other MCP-aware legal AI agent.
 
-- **mcp-krs** (this repo) — Polish company registry (official MS API)
-- [mcp-saos](https://github.com/matematicsolutions/mcp-saos) — common courts, SN, TK, KIO
-- [mcp-nsa](https://github.com/matematicsolutions/mcp-nsa) — NSA + 16 WSA administrative courts
-- [mcp-isap](https://github.com/matematicsolutions/mcp-isap) — Polish legislation (Dz.U. + M.P.)
-- [mcp-eu-sparql](https://github.com/matematicsolutions/mcp-eu-sparql) — EU law + CJEU (EUR-Lex)
+- **mcp-krs** (this repo) - Polish company registry (official MS API)
+- [mcp-saos](https://github.com/matematicsolutions/mcp-saos) - common courts, SN, TK, KIO
+- [mcp-nsa](https://github.com/matematicsolutions/mcp-nsa) - NSA + 16 WSA administrative courts
+- [mcp-isap](https://github.com/matematicsolutions/mcp-isap) - Polish legislation (Dz.U. + M.P.)
+- [mcp-eu-sparql](https://github.com/matematicsolutions/mcp-eu-sparql) - EU law + CJEU (EUR-Lex)
 
 
 All five MCP servers share the same `structuredContent.citations`

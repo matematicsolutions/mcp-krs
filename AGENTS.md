@@ -1,33 +1,33 @@
 # AGENTS.md - mcp-krs
 
-Plik standardu [agents.md](https://agents.md) (Linux Foundation / Agentic AI Foundation) - kanoniczne instrukcje dla agentow AI pracujacych z tym repozytorium. Czytany natywnie przez Cursor, Codex (OpenAI), Jules (Google), Devin / Windsurf, Aider, Amp, Factory, GitHub Copilot.
+An [agents.md](https://agents.md) standard file (Linux Foundation / Agentic AI Foundation) - canonical instructions for AI agents working with this repository. Read natively by Cursor, Codex (OpenAI), Jules (Google), Devin / Windsurf, Aider, Amp, Factory, GitHub Copilot.
 
-## Cel projektu
+## Project goal
 
-Serwer **MCP (Model Context Protocol)** dla **Krajowego Rejestru Sadowego (KRS)** - przez oficjalne, darmowe API **Ministerstwa Sprawiedliwosci** (`api.krs.ms.gov.pl`).
+An **MCP (Model Context Protocol)** server for the **Krajowy Rejestr Sadowy / KRS (National Court Register)** - via the official, free API of the **Ministerstwo Sprawiedliwosci (Ministry of Justice)** (`api.krs.ms.gov.pl`).
 
-Jeden z 5 konektorow polskiego prawa MateMatic ([`mcp-saos`](https://github.com/matematicsolutions/mcp-saos), [`mcp-nsa`](https://github.com/matematicsolutions/mcp-nsa), [`mcp-isap`](https://github.com/matematicsolutions/mcp-isap), [`mcp-krs`](https://github.com/matematicsolutions/mcp-krs) (ten), [`mcp-eu-sparql`](https://github.com/matematicsolutions/mcp-eu-sparql)).
+One of the 5 MateMatic Polish-law connectors ([`mcp-saos`](https://github.com/matematicsolutions/mcp-saos), [`mcp-nsa`](https://github.com/matematicsolutions/mcp-nsa), [`mcp-isap`](https://github.com/matematicsolutions/mcp-isap), [`mcp-krs`](https://github.com/matematicsolutions/mcp-krs) (this one), [`mcp-eu-sparql`](https://github.com/matematicsolutions/mcp-eu-sparql)).
 
-## Kontekst MateMatic (TWARDE OGRANICZENIA)
+## MateMatic context (HARD CONSTRAINTS)
 
-Repo prowadzi [MateMatic Solutions](https://matematicsolutions.com).
+The repo is maintained by [MateMatic Solutions](https://matematicsolutions.com).
 
-- **Dane KRS sa publiczne** ale dotyczy je RODO przy laczeniu z innymi danymi (zarzad = osoby fizyczne).
-- **Kazde wywolanie narzedzia MUSI zwracac `structuredContent.citations`** z: numerem KRS, data odpisu, URL kanonicznym (krs.ms.gov.pl).
-- **Stateless** - bez cache.
-- **Tylko aktualny rejestr lub pelny historyczny** - kazdy odpis ma date snapshot, ktora musi byc w citation. Outdated KRS = ryzyko blad merytoryczny.
+- **KRS data is public** but GDPR applies when combining it with other data (board = natural persons).
+- **Every tool call MUST return `structuredContent.citations`** with: the KRS number, extract date, canonical URL (krs.ms.gov.pl).
+- **Stateless** - no cache.
+- **Current register or full historical only** - every extract has a snapshot date that must be in the citation. An outdated KRS = risk of a factual error.
 
-## Narzedzia MCP (tools contract)
+## MCP tools (tools contract)
 
-| Tool | Parametry kluczowe | Zwraca |
+| Tool | Key parameters | Returns |
 |---|---|---|
-| `get_entity` | `krs_number` | aktualny odpis: nazwa, NIP, REGON, status, kapital + citations |
-| `get_entity_full` | `krs_number` | pelny odpis historyczny (wszystkie zmiany od rejestracji) |
-| `get_board` | `krs_number` | aktualny zarzad + organy nadzorcze (uwaga: PII osob fizycznych) |
+| `get_entity` | `krs_number` | current extract: name, NIP, REGON, status, share capital + citations |
+| `get_entity_full` | `krs_number` | full historical extract (all changes since registration) |
+| `get_board` | `krs_number` | current board + supervisory bodies (note: PII of natural persons) |
 
-Pelny opis: `src/index.ts` + `README.md`.
+Full description: `src/index.ts` + `README.md`.
 
-## Build i test
+## Build and test
 
 ```bash
 npm install        # Node 20+
@@ -38,35 +38,35 @@ npm run dev        # ts-node src/index.ts
 
 Test: `npx @modelcontextprotocol/inspector node dist/index.js`.
 
-## Zasady kodu
+## Code rules
 
 - **TypeScript strict**.
 - **`@modelcontextprotocol/sdk` ^1.12.0**.
-- **API MS jest oficjalne i darmowe** - bez throttlingu agresywnego, ale User-Agent z kontaktem.
-- **Bez polskich znakow w commit messages**.
-- **CHANGELOG bump przy zmianie kontraktu**.
+- **The Ministry of Justice API is official and free** - no aggressive throttling, but include a User-Agent with a contact.
+- **No Polish characters in commit messages**.
+- **CHANGELOG bump on any contract change**.
 
-## Czego NIE robic (twarde reguly)
+## What NOT to do (hard rules)
 
-- **NIE buduj profili osob fizycznych** w samym konektorze - `get_board` zwraca dane jak sa, agregacja "ktora osoba jest w ilu zarzadach" to ryzyko RODO (cel przetwarzania) i powinna byc w produkcie z odpowiednia podstawa.
-- **NIE cachuj odpisow** - kazde wywolanie musi byc fresh (snapshot in time).
-- **NIE pomijaj daty odpisu** w citation - "KRS na dzien YYYY-MM-DD" jest kluczowa informacja.
-- **NIE dodawaj scrapingu** krs.ms.gov.pl - mamy oficjalne API.
+- **DO NOT build natural-person profiles** in the connector itself - `get_board` returns data as-is; aggregating "which person sits on how many boards" is a GDPR risk (purpose of processing) and belongs in a product with an appropriate legal basis.
+- **DO NOT cache extracts** - every call must be fresh (snapshot in time).
+- **DO NOT omit the extract date** in the citation - "KRS as of YYYY-MM-DD" is critical information.
+- **DO NOT add scraping** of krs.ms.gov.pl - we have an official API.
 
-## Zrodla prawdy
+## Sources of truth
 
 1. [README.md](./README.md)
 2. [CHANGELOG.md](./CHANGELOG.md)
 3. `src/index.ts`
-4. [API KRS - Ministerstwo Sprawiedliwosci](https://api.krs.ms.gov.pl/swagger-ui/index.html) - upstream
-5. [Krajowy Rejestr Sadowy - portal](https://krs.ms.gov.pl) - frontend uzytkownika
+4. [KRS API - Ministry of Justice](https://api.krs.ms.gov.pl/swagger-ui/index.html) - upstream
+5. [Krajowy Rejestr Sadowy - portal](https://krs.ms.gov.pl) - user frontend
 
-## Kompatybilnosc agentow
+## Agent compatibility
 
-Standard [AGENTS.md](https://agents.md). Dla Claude Code dodatkowo plik [CLAUDE.md](./CLAUDE.md).
+The [AGENTS.md](https://agents.md) standard. For Claude Code there is an additional [CLAUDE.md](./CLAUDE.md) file.
 
-## Licencja
+## License
 
-**MIT** - patrz [LICENSE](./LICENSE).
+**MIT** - see [LICENSE](./LICENSE).
 
-Cytowanie: *MateMatic Solutions (2026), mcp-krs - MCP server dla polskiego KRS, https://github.com/matematicsolutions/mcp-krs, MIT.*
+Citation: *MateMatic Solutions (2026), mcp-krs - MCP server for the Polish KRS, https://github.com/matematicsolutions/mcp-krs, MIT.*
