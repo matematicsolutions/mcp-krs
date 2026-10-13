@@ -1,6 +1,6 @@
 {
   "name": "@matematicsolutions/mcp-krs",
-  "version": "1.1.1",
+  "version": "1.1.2",
   "description": "MCP server - Polish KRS registry (Krajowy Rejestr Sadowy) via official MS API",
   "main": "dist/index.js",
   "scripts": {
@@ -8,7 +8,8 @@
     "prepare": "tsc",
     "start": "node dist/index.js",
     "dev": "tsx src/index.ts",
-    "drift": "node test/drift.mjs"
+    "drift": "node test/drift.mjs",
+    "test": "npm run drift && node --test test/odpis-pelny.test.mjs"
   },
   "keywords": [
     "mcp",

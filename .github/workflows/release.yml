@@ -43,6 +43,11 @@ jobs:
       - name: Build
         run: npm run build
 
+      # Do 1.1.2 wydanie szlo bez zadnego testu. Regresja odpisu pelnego (falszywy status
+      # "rozwiazana") ma zatrzymac publikacje, zanim dotrze do uzytkownikow.
+      - name: Run gates before publishing
+        run: npm test
+
       - name: Publish to npm (granular token + provenance)
         run: npm publish --provenance --access public
         env:

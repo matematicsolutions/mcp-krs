@@ -25,7 +25,8 @@ import {
 // HTTP client
 // ---------------------------------------------------------------------------
 
-const BASE_URL = "https://api-krs.ms.gov.pl/api/krs";
+// KRS_BASE_URL nadpisuje zrodlo (testy E2E na lokalnej atrapie API KRS).
+const BASE_URL = (process.env.KRS_BASE_URL ?? "https://api-krs.ms.gov.pl/api/krs").replace(/\/+$/, "");
 const KRS_UI_BASE = "https://wyszukiwarka-krs.ms.gov.pl/krs/PrzegladKrsRoz";
 const HTTP_TIMEOUT_MS = 30000;
 const DEFAULT_USER_AGENT =
@@ -200,14 +201,77 @@ interface KrsCitation {
     rejestr?: string;
 }
 
+/**
+ * Czy sekcja niesie BIEZACY wpis z trescia. Do 2026-10-13 `detectStatus` sprawdzal samo
+ * istnienie obiektu, a odpis pelny ma `dzial6.rozwiazanieUniewaznienie` jako PUSTY kontener
+ * `{ okreslenieOkolicznosci: [] }` (zmierzone na zywo) - aktywna spolka wychodzila jako
+ * "rozwiazana". Wpis z `nrWpisuWykr` jest wykreslony, czyli nieaktualny.
+ */
+function maBiezacaTresc(x: unknown): boolean {
+    if (x === null || x === undefined) return false;
+    if (typeof x === "string") return x.trim() !== "";
+    if (typeof x === "number") return true;
+    if (typeof x === "boolean") return x;
+    if (Array.isArray(x)) return x.some(maBiezacaTresc);
+    if (typeof x === "object") {
+        const o = x as Record<string, unknown>;
+        if (o.nrWpisuWykr) return false;
+        return Object.entries(o).some(
+            ([k, v]) => !k.startsWith("nrWpisu") && maBiezacaTresc(v),
+        );
+    }
+    return false;
+}
+
 function detectStatus(d?: OdpisData): string {
     if (!d?.dzial6) return "aktywny";
     const d6 = d.dzial6;
-    if (d6.postepowanieUpadlosciowe) return "upadlosc";
-    if (d6.likwidacja) return "likwidacja";
-    if (d6.rozwiazanieUniewaznienie) return "rozwiazana";
-    if (d6.zawieszenieDzialalnosci) return "zawieszona";
+    if (maBiezacaTresc(d6.postepowanieUpadlosciowe)) return "upadlosc";
+    if (maBiezacaTresc(d6.likwidacja)) return "likwidacja";
+    if (maBiezacaTresc(d6.rozwiazanieUniewaznienie)) return "rozwiazana";
+    if (maBiezacaTresc(d6.zawieszenieDzialalnosci)) return "zawieszona";
     return "aktywny";
+}
+
+/**
+ * Odpis pelny trzyma pola jako TABLICE HISTORII: `[{ <pole>: wartosc, nrWpisuWprow, nrWpisuWykr? }]`.
+ * Wartosc biezaca = ostatni wpis bez `nrWpisuWykr`. Pole juz skalarne (odpis aktualny) przechodzi.
+ */
+function biezaca<T>(pole: unknown, klucz: string): T | undefined {
+    if (!Array.isArray(pole)) return pole as T | undefined;
+    const aktualne = pole.filter(
+        (e) => e && typeof e === "object" && !(e as Record<string, unknown>).nrWpisuWykr,
+    );
+    const ostatni = aktualne[aktualne.length - 1] as Record<string, unknown> | undefined;
+    return ostatni?.[klucz] as T | undefined;
+}
+
+/** Odpis pelny -> naglowek podmiotu z biezacych wpisow (reszta dzialow zostaje nieformatowana). */
+function naglowekZPelnego(odpis: Odpis): Odpis {
+    const dp = odpis.dane?.dzial1?.danePodmiotu as Record<string, unknown> | undefined;
+    if (!dp) return odpis;
+    const danePodmiotu = {
+        ...dp,
+        nazwa: biezaca<string>(dp.nazwa, "nazwa"),
+        formaPrawna: biezaca<string>(dp.formaPrawna, "formaPrawna"),
+        identyfikatory: biezaca<{ nip?: string; regon?: string }>(
+            dp.identyfikatory,
+            "identyfikatory",
+        ),
+    } as DanePodmiotu;
+    const adres = odpis.dane?.dzial1?.siedzibaIAdres?.adres;
+    return {
+        ...odpis,
+        dane: {
+            ...odpis.dane,
+            dzial1: {
+                ...odpis.dane?.dzial1,
+                danePodmiotu,
+                // adres z historia: nie zgadujemy ksztaltu - lepiej brak niz smieci w citation
+                ...(Array.isArray(adres) && { siedzibaIAdres: undefined }),
+            },
+        },
+    };
 }
 
 function buildCitation(krs: string, odpis: Odpis): KrsCitation {
@@ -510,7 +574,7 @@ function errorResult(text: string, code: ErrorCode) {
 }
 
 const server = new Server(
-    { name: "mcp-krs", version: "1.1.0" },
+    { name: "mcp-krs", version: "1.1.2" },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
 );
 
@@ -590,12 +654,40 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         "not_found",
                     );
                 }
-                // Format identyczny - dane sa wieksze (historia w wartosciach),
-                // LLM dostaje pelen plik tekstowy.
+                // Do 2026-10-13 odpis pelny szedl przez szablon odpisu aktualnego: tablice
+                // historii drukowaly sie jako "[object Object]", a pusty kontener dzialu 6
+                // dawal "rozwiazana" dla aktywnej spolki. Teraz naglowek z biezacych wpisow
+                // i uczciwe `degraded` - historii wpisow (~430 KB) nie formatujemy.
+                const norm = naglowekZPelnego(odpis);
+                const dp = norm.dane?.dzial1?.danePodmiotu;
+                const partial = {
+                    dlaczego:
+                        "Odpis pelny niesie historie wszystkich wpisow (setki KB); konektor podaje " +
+                        "tylko biezace dane naglowka podmiotu i status.",
+                    czego_brakuje:
+                        "Historia wpisow oraz biezacy adres, kapital, reprezentacja i dzialy 3-6 " +
+                        "nie sa sformatowane w tej odpowiedzi.",
+                    jak_uzupelnic:
+                        "Stan biezacy: `get_entity` i `get_board`; historia wpisow: odpis pelny " +
+                        `w wyszukiwarce KRS (${krsUiUrl(krs)}).`,
+                };
+                const tekst = [
+                    `Wynik niepelny: ${partial.czego_brakuje} ${partial.dlaczego} ${partial.jak_uzupelnic}`,
+                    "",
+                    `=== Odpis pelny KRS ${krs} (naglowek z biezacych wpisow) ===`,
+                    "",
+                    `Nazwa        : ${dp?.nazwa ?? "brak biezacego wpisu"}`,
+                    `Forma prawna : ${dp?.formaPrawna ?? "brak biezacego wpisu"}`,
+                    `NIP          : ${dp?.identyfikatory?.nip ?? "brak biezacego wpisu"}`,
+                    `REGON        : ${dp?.identyfikatory?.regon ?? "brak biezacego wpisu"}`,
+                    `Status       : ${detectStatus(norm.dane)}`,
+                ].join("\n");
                 return {
-                    content: [{ type: "text", text: formatEntity(krs, odpis) }],
+                    content: [{ type: "text", text: tekst }],
                     structuredContent: {
-                        citations: [buildCitation(krs, odpis)],
+                        status: "degraded",
+                        partial_result: partial,
+                        citations: [buildCitation(krs, norm)],
                     },
                 };
             }
