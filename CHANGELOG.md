@@ -3,10 +3,10 @@
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) +
 [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [1.2.0] - 2026-10-13
 
 Odpornosc na ciche awarie zrodla i provenance (wzorce #1, #4 i #7 z oceny soba-labs/krs-mcp,
-2026-10-13). **Do decyzji przy wydaniu: wersja.** Kody bledow sa rozdzielone - klient branchujacy
+2026-10-13). Wersja minor: kody bledow sa rozdzielone, ale zaden znany konsument nie rozgalezia sie na nich - PATRON czyta tylko `isError`, prawo-pl-mcp opakowuje bledy konektora we wlasny `upstream_error` (sprawdzone 2026-10-13).
 na `upstream_error` przy awarii zrodla dostanie teraz `forbidden`, `rate_limited`,
 `upstream_unavailable`, `upstream_shape` albo `internal_error`; `structuredContent` bledu niesie
 tez `fault` i `retryable`. Opisy narzedzi (tools/list) bez zmian. Wyszukiwarki po nazwie przez
@@ -33,10 +33,25 @@ oficjalnego API odpisow.
 - `release.yml`: krok "Run gates before publishing" (`npm test`, bramka paczki) - do tej pory wydanie szlo bez zadnego testu. `ci.yml`: `npm test` i bramka paczki (wczesniej tylko build).
 - Drift test w obie strony dla kodow z `src/krs-http.ts` (typ <-> `KODY` <-> INSTRUCTIONS <-> uzycia; pusta lista = BLOKADA).
 
-### Fixed (odpis pelny - falszywe fakty bez bledu)
+### Fixed
 
-- **`get_entity_full` na zywym zrodle** podawal dla aktywnej spolki gieldowej status `rozwiazana`, nazwe `[object Object],[object Object]` i NIP/REGON `?` (zmierzone 2026-10-13; `get_entity` ten sam KRS: `aktywny`). Dwie przyczyny: (1) odpis pelny trzyma pola jako tablice historii wpisow, a narzedzie formatowalo go szablonem odpisu aktualnego; (2) `dzial6.rozwiazanieUniewaznienie` istnieje w odpisie pelnym jako PUSTY kontener `{ okreslenieOkolicznosci: [] }`, a `detectStatus` sprawdzal samo istnienie obiektu.
-- Teraz: status liczony wylacznie z niepustych i niewykreslonych wpisow (dotyczy tez odpisu aktualnego); naglowek odpisu pelnego (nazwa, forma, NIP, REGON) z biezacych wpisow historii (bez `nrWpisuWykr`); wynik `status: degraded` + `partial_result` i odpowiedz zaczynajaca sie od "Wynik niepelny" - historii wpisow (~430 KB) konektor nie formatuje, odsyla do `get_entity`/`get_board` i wyszukiwarki KRS. Zywy smoke 5/5. **Zmiana kontraktu `get_entity_full` (krotszy wynik) - do decyzji przy wydaniu: wersja.** Pelny formatter historii = osobna decyzja produktowa.
+- Naprawa odpisu pelnego (falszywy status `rozwiazana`) wydana wczesniej jako hotfix 1.1.2 - patrz nizej.
+
+## [1.1.2] - 2026-10-13
+
+Hotfix: `get_entity_full` podawal falszywe fakty bez bledu.
+
+### Fixed
+
+- **`get_entity_full` dla aktywnej spolki zwracal status `rozwiazana`**, nazwe `[object Object],[object Object]` i NIP/REGON `?` (zmierzone na zywym API KRS 2026-10-13 na spolce gieldowej; `get_entity` dla tego samego KRS: `aktywny`). Przyczyny: (1) odpis pelny trzyma pola jako tablice historii wpisow, a narzedzie formatowalo go szablonem odpisu aktualnego; (2) `dzial6.rozwiazanieUniewaznienie` wystepuje w odpisie pelnym jako PUSTY kontener `{ okreslenieOkolicznosci: [] }`, a `detectStatus` uznawal samo istnienie obiektu za rozwiazanie.
+- Status liczony wylacznie z niepustych i niewykreslonych (bez `nrWpisuWykr`) wpisow dzialu 6 - dotyczy takze `get_entity` i `get_board`.
+- `get_entity_full` podaje naglowek (nazwa, forma prawna, NIP, REGON, status) z biezacych wpisow historii; wynik niesie `structuredContent.status: "degraded"` i `partial_result`, a tekst zaczyna sie od "Wynik niepelny" - historii wpisow (~430 KB dla duzej spolki) konektor nie formatuje i odsyla do `get_entity`/`get_board` oraz wyszukiwarki KRS.
+- Wersja serwera w `initialize` (`1.1.0`) zrownana z paczka.
+
+### Added
+
+- `KRS_BASE_URL` (env) - test regresji na lokalnej atrapie API KRS przez protokol MCP (`test/odpis-pelny.test.mjs`, 6 przypadkow, w tym kontrole pozytywne: biezacy wpis o rozwiazaniu -> `rozwiazana`, wykreslony -> `aktywny`).
+- `npm test` (drift + regresja) i krok "Run gates before publishing" w `release.yml` - do tej pory wydanie szlo bez zadnego testu.
 
 ## [1.1.0] — 2026-05-25
 
