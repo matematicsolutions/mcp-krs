@@ -28,3 +28,10 @@ jobs:
 
       - name: Verify dist artifact
         run: ls -la dist/index.js
+
+      # Do 2026-10-13 CI tylko budowal - drift test istnial, ale nic go nie uruchamialo.
+      - name: Drift + unit + E2E on local stub (offline)
+        run: npm test
+
+      - name: Package gate (runtime files in npm pack)
+        run: npm run test:package

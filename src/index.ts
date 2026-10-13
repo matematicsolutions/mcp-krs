@@ -20,12 +20,14 @@ import {
     CallToolRequestSchema,
     ListToolsRequestSchema,
 } from "@modelcontextprotocol/sdk/types.js";
+import { fetchJson, bladJakoWynik, KrsError, type KrsErrorCode } from "./krs-http.js";
 
 // ---------------------------------------------------------------------------
 // HTTP client
 // ---------------------------------------------------------------------------
 
-const BASE_URL = "https://api-krs.ms.gov.pl/api/krs";
+// KRS_BASE_URL nadpisuje zrodlo (testy E2E na lokalnej atrapie API KRS; jak SAOS_BASE_URL).
+const BASE_URL = (process.env.KRS_BASE_URL ?? "https://api-krs.ms.gov.pl/api/krs").replace(/\/+$/, "");
 const KRS_UI_BASE = "https://wyszukiwarka-krs.ms.gov.pl/krs/PrzegladKrsRoz";
 const HTTP_TIMEOUT_MS = 30000;
 const DEFAULT_USER_AGENT =
@@ -41,28 +43,18 @@ async function throttled<T>(fn: () => Promise<T>): Promise<T> {
     return fn();
 }
 
+// 404 -> null; kazda inna awaria -> KrsError (src/krs-http.ts). Bez ponawiania:
+// 401/403 to zmiana zabezpieczen zrodla i decyzja czlowieka, nie petla.
 async function apiGet<T>(path: string): Promise<T | null> {
-    const url = `${BASE_URL}${path}`;
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), HTTP_TIMEOUT_MS);
-    try {
-        const res = await fetch(url, {
-            method: "GET",
-            headers: {
-                "User-Agent": DEFAULT_USER_AGENT,
-                Accept: "application/json",
-                "Accept-Language": "pl-PL,pl;q=0.9",
-            },
-            signal: controller.signal,
-        });
-        if (res.status === 404) return null;
-        if (!res.ok) {
-            throw new Error(`MS KRS API HTTP ${res.status} ${res.statusText}`);
-        }
-        return (await res.json()) as T;
-    } finally {
-        clearTimeout(timer);
-    }
+    return (await fetchJson(
+        `${BASE_URL}${path}`,
+        {
+            "User-Agent": DEFAULT_USER_AGENT,
+            Accept: "application/json",
+            "Accept-Language": "pl-PL,pl;q=0.9",
+        },
+        HTTP_TIMEOUT_MS,
+    )) as T | null;
 }
 
 // ---------------------------------------------------------------------------
@@ -174,6 +166,8 @@ interface OdpisData {
 interface Odpis {
     rodzaj?: string;
     naglowekA?: NaglowekA;
+    // Odpis pelny niesie naglowekP (zmierzone na zywo 2026-10-13), nie naglowekA.
+    naglowekP?: { dataCzasOdpisu?: string; stanZDnia?: string };
     dane?: OdpisData;
 }
 
@@ -200,14 +194,77 @@ interface KrsCitation {
     rejestr?: string;
 }
 
+/**
+ * Czy sekcja niesie BIEZACY wpis z trescia. Do 2026-10-13 `detectStatus` sprawdzal samo
+ * istnienie obiektu, a odpis pelny ma `dzial6.rozwiazanieUniewaznienie` jako PUSTY kontener
+ * `{ okreslenieOkolicznosci: [] }` (zmierzone na zywo) - aktywna spolka wychodzila jako
+ * "rozwiazana". Wpis z `nrWpisuWykr` jest wykreslony, czyli nieaktualny.
+ */
+function maBiezacaTresc(x: unknown): boolean {
+    if (x === null || x === undefined) return false;
+    if (typeof x === "string") return x.trim() !== "";
+    if (typeof x === "number") return true;
+    if (typeof x === "boolean") return x;
+    if (Array.isArray(x)) return x.some(maBiezacaTresc);
+    if (typeof x === "object") {
+        const o = x as Record<string, unknown>;
+        if (o.nrWpisuWykr) return false;
+        return Object.entries(o).some(
+            ([k, v]) => !k.startsWith("nrWpisu") && maBiezacaTresc(v),
+        );
+    }
+    return false;
+}
+
 function detectStatus(d?: OdpisData): string {
     if (!d?.dzial6) return "aktywny";
     const d6 = d.dzial6;
-    if (d6.postepowanieUpadlosciowe) return "upadlosc";
-    if (d6.likwidacja) return "likwidacja";
-    if (d6.rozwiazanieUniewaznienie) return "rozwiazana";
-    if (d6.zawieszenieDzialalnosci) return "zawieszona";
+    if (maBiezacaTresc(d6.postepowanieUpadlosciowe)) return "upadlosc";
+    if (maBiezacaTresc(d6.likwidacja)) return "likwidacja";
+    if (maBiezacaTresc(d6.rozwiazanieUniewaznienie)) return "rozwiazana";
+    if (maBiezacaTresc(d6.zawieszenieDzialalnosci)) return "zawieszona";
     return "aktywny";
+}
+
+/**
+ * Odpis pelny trzyma pola jako TABLICE HISTORII: `[{ <pole>: wartosc, nrWpisuWprow, nrWpisuWykr? }]`.
+ * Wartosc biezaca = ostatni wpis bez `nrWpisuWykr`. Pole juz skalarne (odpis aktualny) przechodzi.
+ */
+function biezaca<T>(pole: unknown, klucz: string): T | undefined {
+    if (!Array.isArray(pole)) return pole as T | undefined;
+    const aktualne = pole.filter(
+        (e) => e && typeof e === "object" && !(e as Record<string, unknown>).nrWpisuWykr,
+    );
+    const ostatni = aktualne[aktualne.length - 1] as Record<string, unknown> | undefined;
+    return ostatni?.[klucz] as T | undefined;
+}
+
+/** Odpis pelny -> naglowek podmiotu z biezacych wpisow (reszta dzialow zostaje nieformatowana). */
+function naglowekZPelnego(odpis: Odpis): Odpis {
+    const dp = odpis.dane?.dzial1?.danePodmiotu as Record<string, unknown> | undefined;
+    if (!dp) return odpis;
+    const danePodmiotu = {
+        ...dp,
+        nazwa: biezaca<string>(dp.nazwa, "nazwa"),
+        formaPrawna: biezaca<string>(dp.formaPrawna, "formaPrawna"),
+        identyfikatory: biezaca<{ nip?: string; regon?: string }>(
+            dp.identyfikatory,
+            "identyfikatory",
+        ),
+    } as DanePodmiotu;
+    const adres = odpis.dane?.dzial1?.siedzibaIAdres?.adres;
+    return {
+        ...odpis,
+        dane: {
+            ...odpis.dane,
+            dzial1: {
+                ...odpis.dane?.dzial1,
+                danePodmiotu,
+                // adres z historia: nie zgadujemy ksztaltu - lepiej brak niz smieci w citation
+                ...(Array.isArray(adres) && { siedzibaIAdres: undefined }),
+            },
+        },
+    };
 }
 
 function buildCitation(krs: string, odpis: Odpis): KrsCitation {
@@ -241,6 +298,35 @@ function buildCitation(krs: string, odpis: Odpis): KrsCitation {
         ...(odpis.naglowekA?.rejestr && { rejestr: odpis.naglowekA.rejestr }),
     };
 }
+
+// ---------------------------------------------------------------------------
+// Provenance w kazdym udanym wyniku (wzorzec soba-labs/krs-mcp #1, `src/tools/common.ts:38-51`):
+// zrodlo, czas pobrania, czas wytworzenia i co zrobil konektor - pod warunki ponownego
+// wykorzystania informacji sektora publicznego MS. Inaczej niz SAOS, KRS PODAJE czas
+// wytworzenia odpisu (`dataCzasOdpisu`); przepisujemy go doslownie w formacie MS
+// (DD.MM.YYYY HH:MM:SS, strefy zrodlo nie podaje - nie zgadujemy). Brak pola = jawne null.
+// ---------------------------------------------------------------------------
+
+function provenance(source: string, odpis: Odpis, processing: string) {
+    const produced =
+        odpis.naglowekA?.dataCzasOdpisu ?? odpis.naglowekP?.dataCzasOdpisu;
+    return {
+        source,
+        retrieved_at: new Date().toISOString(),
+        source_produced_at: typeof produced === "string" ? produced : null,
+        processing,
+    };
+}
+
+const PROCESSING_ENTITY =
+    "Odpis aktualny z API KRS MS bez zmian merytorycznych; konektor wybral pola (dane podmiotu, " +
+    "adres, kapital, reprezentacja, PKD), wyliczyl status z dzialu 6 i zbudowal citations.";
+const PROCESSING_ENTITY_FULL =
+    "Odpis pelny z API KRS MS; konektor wybral biezace wpisy naglowka podmiotu (bez " +
+    "nrWpisuWykr), wyliczyl status z niewykreslonych wpisow dzialu 6 i nie formatuje historii.";
+const PROCESSING_BOARD =
+    "Odpis aktualny z API KRS MS bez zmian merytorycznych; konektor wybral tylko dzial 2 " +
+    "(reprezentacja, sposob reprezentacji, prokurenci) i zbudowal citations.";
 
 // ---------------------------------------------------------------------------
 // Text formatters
@@ -398,11 +484,18 @@ const INSTRUCTIONS = `Ten serwer MCP udostepnia Krajowy Rejestr Sadowy (KRS) prz
 
 ## Iteracja po bledach
 
-Tool zwraca \`isError: true\` + tekst z prefixem \`[code]\`. Kody:
+Tool zwraca \`isError: true\` + tekst z prefixem \`[code]\`; \`structuredContent\` niesie \`error_code\`, \`fault\` (caller/upstream/network/server) i \`retryable\`. Ponawiaj TYLKO przy \`retryable: true\`, i to raz. Kody:
 - \`missing_arg\` - brak \`krs\` (numer 1-10 cyfr wymagany).
 - \`invalid_krs\` - format nieprawidlowy (np. niecyfry, ponad 10 cyfr).
 - \`not_found\` - KRS nie istnieje w danym rejestrze. Sprobuj drugi rejestr (P↔S) lub sprawdz cyfry.
-- \`upstream_error\` - blad MS API. Retry raz przed surface do uzytkownika.
+- \`rate_limited\` - zrodlo ogranicza liczbe zapytan; odczekaj \`retry_after_s\` i ponow raz.
+- \`forbidden\` - API KRS odmowilo dostepu (401/403). NIE ponawiaj, nie obchodz zabezpieczen; powiedz uzytkownikowi.
+- \`upstream_unavailable\` - API KRS nie odpowiada (5xx, timeout, siec). Ponow raz pozniej.
+- \`upstream_shape\` - zrodlo oddalo cos innego niz odpis JSON. To NIE jest brak podmiotu.
+- \`upstream_error\` - inna nieoczekiwana odpowiedz API KRS. Powiedz o awarii zamiast zgadywac.
+- \`internal_error\` - blad tego serwera, nie zrodla. Nie ponawiaj.
+
+Kazdy udany wynik niesie \`structuredContent.provenance\`: \`source\` (URL odpisu), \`retrieved_at\`, \`source_produced_at\` (czas wytworzenia odpisu z naglowka MS, doslownie; null gdy brak) i \`processing\`.
 
 ## Styl odpowiedzi
 
@@ -498,15 +591,12 @@ const TOOLS = [
 // MCP Server setup
 // ---------------------------------------------------------------------------
 
-// Strukturalne kody bledow.
-type ErrorCode = "missing_arg" | "invalid_krs" | "not_found" | "upstream_error";
+// Strukturalne kody bledow - jedna tabela KODY w src/krs-http.ts (wina, ponawialnosc,
+// co zrobic); drift test pilnuje jej w obie strony z INSTRUCTIONS.
+type ErrorCode = KrsErrorCode;
 
 function errorResult(text: string, code: ErrorCode) {
-    return {
-        content: [{ type: "text" as const, text: `[${code}] ${text}` }],
-        structuredContent: { error_code: code },
-        isError: true,
-    };
+    return bladJakoWynik(new KrsError(code, text));
 }
 
 const server = new Server(
@@ -527,11 +617,21 @@ async function fetchOdpis(
     krs: string,
     rejestr: string,
     typ: "OdpisAktualny" | "OdpisPelny",
-): Promise<{ krs: string; odpis: Odpis | null }> {
+): Promise<{ krs: string; odpis: Odpis | null; source: string }> {
     const normalized = normalizeKrs(krs);
     const path = `/${typ}/${normalized}?rejestr=${encodeURIComponent(rejestr)}&format=json`;
+    const source = `${BASE_URL}${path}`;
     const data = await throttled(() => apiGet<OdpisResponse>(path));
-    return { krs: normalized, odpis: data?.odpis ?? null };
+    if (data === null) return { krs: normalized, odpis: null, source };
+    // 200 bez obiektu `odpis` to zmiana kontraktu zrodla, nie brak podmiotu
+    // (do 2026-10-13 konczylo sie jako `not_found` "sprawdz cyfry").
+    if (typeof data !== "object" || typeof data.odpis !== "object" || data.odpis === null) {
+        throw new KrsError(
+            "upstream_shape",
+            `API KRS oddalo JSON bez obiektu 'odpis' (zmiana kontraktu?): ${source}`,
+        );
+    }
+    return { krs: normalized, odpis: data.odpis, source };
 }
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
@@ -559,7 +659,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     try {
         switch (name) {
             case "get_entity": {
-                const { krs, odpis } = await fetchOdpis(
+                const { krs, odpis, source } = await fetchOdpis(
                     krsRaw,
                     rejestr,
                     "OdpisAktualny",
@@ -574,12 +674,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [{ type: "text", text: formatEntity(krs, odpis) }],
                     structuredContent: {
                         citations: [buildCitation(krs, odpis)],
+                        provenance: provenance(source, odpis, PROCESSING_ENTITY),
                     },
                 };
             }
 
             case "get_entity_full": {
-                const { krs, odpis } = await fetchOdpis(
+                const { krs, odpis, source } = await fetchOdpis(
                     krsRaw,
                     rejestr,
                     "OdpisPelny",
@@ -590,18 +691,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                         "not_found",
                     );
                 }
-                // Format identyczny - dane sa wieksze (historia w wartosciach),
-                // LLM dostaje pelen plik tekstowy.
+                // Do 2026-10-13 odpis pelny szedl przez szablon odpisu aktualnego: tablice
+                // historii drukowaly sie jako "[object Object]", a pusty kontener dzialu 6
+                // dawal "rozwiazana" dla aktywnej spolki. Teraz naglowek z biezacych wpisow
+                // i uczciwe `degraded` - historii wpisow (~430 KB) nie formatujemy.
+                const norm = naglowekZPelnego(odpis);
+                const dp = norm.dane?.dzial1?.danePodmiotu;
+                const partial = {
+                    dlaczego:
+                        "Odpis pelny niesie historie wszystkich wpisow (setki KB); konektor podaje " +
+                        "tylko biezace dane naglowka podmiotu i status.",
+                    czego_brakuje:
+                        "Historia wpisow oraz biezacy adres, kapital, reprezentacja i dzialy 3-6 " +
+                        "nie sa sformatowane w tej odpowiedzi.",
+                    jak_uzupelnic:
+                        "Stan biezacy: `get_entity` i `get_board`; historia wpisow: odpis pelny " +
+                        `w wyszukiwarce KRS (${krsUiUrl(krs)}).`,
+                };
+                const tekst = [
+                    `Wynik niepelny: ${partial.czego_brakuje} ${partial.dlaczego} ${partial.jak_uzupelnic}`,
+                    "",
+                    `=== Odpis pelny KRS ${krs} (naglowek z biezacych wpisow) ===`,
+                    "",
+                    `Nazwa        : ${dp?.nazwa ?? "brak biezacego wpisu"}`,
+                    `Forma prawna : ${dp?.formaPrawna ?? "brak biezacego wpisu"}`,
+                    `NIP          : ${dp?.identyfikatory?.nip ?? "brak biezacego wpisu"}`,
+                    `REGON        : ${dp?.identyfikatory?.regon ?? "brak biezacego wpisu"}`,
+                    `Status       : ${detectStatus(norm.dane)}`,
+                ].join("\n");
                 return {
-                    content: [{ type: "text", text: formatEntity(krs, odpis) }],
+                    content: [{ type: "text", text: tekst }],
                     structuredContent: {
-                        citations: [buildCitation(krs, odpis)],
+                        status: "degraded",
+                        partial_result: partial,
+                        citations: [buildCitation(krs, norm)],
+                        provenance: provenance(source, odpis, PROCESSING_ENTITY_FULL),
                     },
                 };
             }
 
             case "get_board": {
-                const { krs, odpis } = await fetchOdpis(
+                const { krs, odpis, source } = await fetchOdpis(
                     krsRaw,
                     rejestr,
                     "OdpisAktualny",
@@ -615,6 +745,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     ],
                     structuredContent: {
                         citations: [buildCitation(krs, odpis)],
+                        provenance: provenance(source, odpis, PROCESSING_BOARD),
                     },
                 };
             }
@@ -623,14 +754,9 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return errorResult(`Nieznane narzedzie: ${name}`, "missing_arg");
         }
     } catch (err: unknown) {
-        const msg = err instanceof Error ? err.message : String(err);
-        if (/404|not found/i.test(msg)) {
-            return errorResult(`KRS nie znaleziony w MS API: ${msg}.`, "not_found");
-        }
-        return errorResult(
-            `Blad komunikacji z API MS KRS: ${msg}. Sprobuj ponownie za chwile.`,
-            "upstream_error",
-        );
+        // Kod z KrsError (wina + ponawialnosc z KODY); cokolwiek innego to `internal_error`.
+        // Do 2026-10-13: regex /404|not found/ na tresci bledu + "Sprobuj ponownie" dla reszty.
+        return bladJakoWynik(err);
     }
 });
 

@@ -21,9 +21,9 @@ The repo is maintained by [MateMatic Solutions](https://matematicsolutions.com).
 
 | Tool | Key parameters | Returns |
 |---|---|---|
-| `get_entity` | `krs_number` | current extract: name, NIP, REGON, status, share capital + citations |
-| `get_entity_full` | `krs_number` | full historical extract (all changes since registration) |
-| `get_board` | `krs_number` | current board + supervisory bodies (note: PII of natural persons) |
+| `get_entity` | `krs`, `rejestr` (P/S) | current extract: name, NIP, REGON, status, share capital + citations |
+| `get_entity_full` | `krs`, `rejestr` | full historical extract (all changes since registration) |
+| `get_board` | `krs`, `rejestr` | current board + supervisory bodies (note: PII of natural persons) |
 
 Full description: `src/index.ts` + `README.md`.
 
@@ -34,6 +34,9 @@ npm install        # Node 20+
 npm run build      # tsc -> dist/
 npm start          # node dist/index.js
 npm run dev        # ts-node src/index.ts
+npm test           # drift + unit + E2E on a local KRS stub (offline; needs build)
+npm run test:package  # npm pack gate: runtime files present in the package
+npm run smoke      # live KRS API, every tool from tools/list (not part of release)
 ```
 
 Test: `npx @modelcontextprotocol/inspector node dist/index.js`.
@@ -52,6 +55,8 @@ Test: `npx @modelcontextprotocol/inspector node dist/index.js`.
 - **DO NOT cache extracts** - every call must be fresh (snapshot in time).
 - **DO NOT omit the extract date** in the citation - "KRS as of YYYY-MM-DD" is critical information.
 - **DO NOT add scraping** of krs.ms.gov.pl - we have an official API.
+- **A `401`/`403` from the KRS API means access controls changed: it requires human review.** It maps to `forbidden` (`retryable: false`). Never add code that retries it in a loop or bypasses access controls automatically (rotated or generated frontend keys, spoofed `origin`/`referer` headers, undocumented endpoints such as the search website's backend).
+- **A source failure must never look like "entity not found".** Non-JSON bodies, a `200` without an `odpis` object and failed fetches get a named code from `KODY` in `src/krs-http.ts`; only an upstream `404` is `not_found`.
 
 ## Sources of truth
 

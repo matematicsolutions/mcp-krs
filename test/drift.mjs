@@ -11,7 +11,9 @@ const SRC = readFileSync(join(__dirname, "..", "src", "index.ts"), "utf-8");
 
 const failures = [];
 
-const instructionsMatch = SRC.match(/const INSTRUCTIONS = `([\s\S]*?)`;/);
+// Koniec literalu = pierwszy NIEescapowany backtick. Do 2026-10-13 `([\s\S]*?)`;` konczylo
+// sie na pierwszym "\`;" wewnatrz tekstu i po cichu ucinalo reszte INSTRUCTIONS.
+const instructionsMatch = SRC.match(/const INSTRUCTIONS = `((?:\\[\s\S]|[^`\\])*)`;/);
 if (!instructionsMatch) {
     failures.push("Nie znaleziono const INSTRUCTIONS w src/index.ts");
 } else {
@@ -42,26 +44,53 @@ if (!instructionsMatch) {
     }
 }
 
-const typeMatch = SRC.match(/type ErrorCode\s*=\s*([^;]+);/);
-if (!typeMatch) {
-    failures.push("Nie znaleziono type ErrorCode w src/index.ts");
-} else {
-    const codesInType = new Set();
-    for (const m of typeMatch[1].matchAll(/"(\w+)"/g)) codesInType.add(m[1]);
+// -----------------------------------------------------------------------------
+// Kody bledow: jedno zrodlo prawdy = `export type KrsErrorCode` + tabela KODY w
+// src/krs-http.ts (2026-10-13; wczesniej typ w index.ts i jeden kod awarii zrodla
+// `upstream_error` dla 401/403, 5xx, HTML/200 i bugow konektora). Sprawdzane w obie strony.
+// -----------------------------------------------------------------------------
 
-    const instructionsText = instructionsMatch ? instructionsMatch[1] : "";
-    for (const code of codesInType) {
-        const docPattern = new RegExp("\\b" + code + "\\b");
-        if (!docPattern.test(instructionsText)) {
-            failures.push(`ErrorCode '${code}' w typie TS nie jest udokumentowany w INSTRUCTIONS.`);
-        }
-    }
+if (!/type ErrorCode\s*=\s*KrsErrorCode\s*;/.test(SRC)) {
+    failures.push("type ErrorCode w src/index.ts ma byc aliasem KrsErrorCode (jedno zrodlo kodow).");
+}
+const HTTP_SRC = readFileSync(join(__dirname, "..", "src", "krs-http.ts"), "utf-8");
+const kodyTyp = HTTP_SRC.match(/export type KrsErrorCode\s*=\s*([^;]+);/);
+const kodyZrodla = new Set(kodyTyp ? [...kodyTyp[1].matchAll(/"(\w+)"/g)].map((m) => m[1]) : []);
+const kodyTabeli = new Set(
+    [...(HTTP_SRC.match(/export const KODY[^{]*\{([\s\S]*?)\n\};/)?.[1] ?? "").matchAll(/^    (\w+): \{/gm)].map(
+        (m) => m[1],
+    ),
+);
+const OBA = SRC + "\n" + HTTP_SRC;
+const rzucane = new Set([...OBA.matchAll(/new KrsError\(\s*"(\w+)"/g)].map((m) => m[1]));
+const wynikiIndex = new Set([...SRC.matchAll(/errorResult\([\s\S]*?,\s*"(\w+)"\s*,?\s*\)/g)].map((m) => m[1]));
+const instructionsText = instructionsMatch ? instructionsMatch[1] : "";
+const udokumentowane = new Set(
+    [...(instructionsText.split("## Iteracja po bledach")[1] ?? "").matchAll(/^- \\`(\w+)\\` - /gm)].map((m) => m[1]),
+);
 
-    for (const m of SRC.matchAll(/errorResult\([^,)]+,\s*"(\w+)"\)/g)) {
-        if (!codesInType.has(m[1])) {
-            failures.push(`errorResult uzywa kodu '${m[1]}' ktorego nie ma w typie ErrorCode.`);
-        }
+if (kodyZrodla.size === 0 || kodyTabeli.size === 0 || rzucane.size === 0 || wynikiIndex.size === 0 || udokumentowane.size === 0) {
+    failures.push(
+        "Pusta lista kodow = BLOKADA (regex nic nie znalazl): " +
+            `typ=${kodyZrodla.size} KODY=${kodyTabeli.size} rzucane=${rzucane.size} ` +
+            `errorResult=${wynikiIndex.size} INSTRUCTIONS=${udokumentowane.size}`,
+    );
+}
+for (const k of kodyZrodla) {
+    if (!kodyTabeli.has(k)) failures.push(`Kod '${k}' nie ma wpisu w tabeli KODY.`);
+    if (!udokumentowane.has(k)) failures.push(`Kod '${k}' nie jest udokumentowany w INSTRUCTIONS (sekcja bledow).`);
+    if (!rzucane.has(k) && !wynikiIndex.has(k)) {
+        failures.push(`Kod '${k}' jest w typie, ale nic go nie zwraca (martwa obietnica w INSTRUCTIONS).`);
     }
+}
+for (const k of kodyTabeli) {
+    if (!kodyZrodla.has(k)) failures.push(`Wpis KODY '${k}' nie jest w typie KrsErrorCode.`);
+}
+for (const k of udokumentowane) {
+    if (!kodyZrodla.has(k)) failures.push(`INSTRUCTIONS dokumentuje kod '${k}', ktorego nie ma w KrsErrorCode.`);
+}
+for (const k of [...rzucane, ...wynikiIndex]) {
+    if (!kodyZrodla.has(k)) failures.push(`Kod '${k}' uzyty w kodzie, a nie ma go w KrsErrorCode.`);
 }
 
 if (failures.length === 0) {
