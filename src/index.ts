@@ -600,7 +600,7 @@ function errorResult(text: string, code: ErrorCode) {
 }
 
 const server = new Server(
-    { name: "mcp-krs", version: "1.2.1" },
+    { name: "mcp-krs", version: "1.2.2" },
     { capabilities: { tools: {} }, instructions: INSTRUCTIONS },
 );
 
